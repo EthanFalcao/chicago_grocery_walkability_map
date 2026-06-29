@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chicago Grocery Store Walkability</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+
+    .title-box {
+      position: absolute;
+      top: 12px;
+      left: 56px;
+      z-index: 1000;
+      background: white;
+      padding: 10px 14px;
+      border: 2px solid #444;
+      border-radius: 6px;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+      max-width: 360px;
+    }
+
+    .title-box h1 {
+      font-size: 16px;
+      margin: 0 0 4px 0;
+    }
+
+    .title-box div {
+      font-size: 13px;
+      color: #333;
+    }
+
+    .slicer-panel {
+      position: absolute;
+      top: 86px;
+      right: 14px;
+      width: 310px;
+      max-height: calc(100% - 130px);
+      z-index: 1000;
+      background: white;
+      border: 2px solid #444;
+      border-radius: 6px;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .slicer-header {
+      padding: 10px 12px;
+      border-bottom: 1px solid #ccc;
+      background: #f7f7f7;
+    }
+
+    .slicer-header h2 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+    }
+
+    .slicer-actions {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .slicer-actions button {
+      font-size: 12px;
+      padding: 4px 7px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      background: #f2f2f2;
+      cursor: pointer;
+    }
+
+    #storeSearch {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 6px 8px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .slicer-list {
+      overflow-y: auto;
+      padding: 8px 12px 12px 12px;
+    }
+
+    .store-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      margin-bottom: 7px;
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .store-row input {
+      margin-top: 1px;
+    }
+
+    .legend-box {
+      position: absolute;
+      bottom: 35px;
+      left: 50px;
+      z-index: 1000;
+      background: white;
+      padding: 10px 14px;
+      border: 2px solid #444;
+      border-radius: 6px;
+      font-size: 14px;
+      box-shadow: 2px 2px 6px rgba(0,0,0,0.25);
+    }
+
+    .count-row {
+      margin-top: 7px;
+      font-size: 12px;
+      color: #444;
+    }
+
+    @media (max-width: 800px) {
+      .slicer-panel {
+        width: 260px;
+        right: 8px;
+      }
+
+      .title-box {
+        max-width: 280px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+
+  <div class="title-box">
+    <h1>Chicago Grocery Store Walkability</h1>
+    <div>12-minute walking areas around selected grocery stores</div>
+  </div>
+
+  <div class="slicer-panel">
+    <div class="slicer-header">
+      <h2>Grocery store slicer</h2>
+      <div class="slicer-actions">
+        <button id="selectAllBtn">Select all</button>
+        <button id="clearAllBtn">Clear all</button>
+      </div>
+      <input id="storeSearch" type="text" placeholder="Search store names..." />
+      <div class="count-row">
+        <span id="visibleCount"></span>
+      </div>
+    </div>
+    <div id="storeList" class="slicer-list"></div>
+  </div>
+
+  <div class="legend-box">
+    <b>Legend</b><br>
+    <span style="color:#2ca25f;">■</span> 12-minute grocery walking area<br>
+    <span style="color:#5e3c99;">━</span> CTA rail line<br>
+    <span style="color:#006d2c;">●</span> Grocery store
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script>
+    const storesGeoJson = {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [-87.6, 41.8]}, "properties": {"store_id": "store_0001", "name": "Test", "shop_type": "grocery", "osm_type": null, "osm_id": null, "lat": 41.8, "lon": -87.6}}]};
+    const isochronesGeoJson = {"type": "FeatureCollection", "features": []};
+    const railGeoJson = {"type": "FeatureCollection", "features": []};
+    const storeList = [{"store_id": "store_0001", "name": "Test"}];
+
+    const map = L.map("map", {
+      center: [41.8781, -87.6298],
+      zoom: 11
+    });
+
+    const lightBase = L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+      {
+        maxZoom: 20,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    ).addTo(map);
+
+    const osmBase = L.tileLayer(
+      "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }
+    );
+
+    const darkBase = L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {
+        maxZoom: 20,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    );
+
+    const baseMaps = {
+      "Light streets": lightBase,
+      "OpenStreetMap streets": osmBase,
+      "Dark basemap": darkBase
+    };
+
+    const railLayer = L.geoJSON(railGeoJson, {
+      style: function(feature) {
+        return {
+          color: "#5e3c99",
+          weight: 3,
+          opacity: 0.85
+        };
+      }
+    }).addTo(map);
+
+    const activeStoreIds = new Set(storeList.map(s => s.store_id));
+
+    let storeMarkerLayer = L.layerGroup().addTo(map);
+    let isochroneLayer = L.layerGroup().addTo(map);
+
+    function storePopupHtml(props) {
+      return `
+        <b>${props.name}</b><br>
+        Type: ${props.shop_type || "grocery-related"}<br>
+        OSM: ${props.osm_type} ${props.osm_id}<br>
+        Lat/Lon: ${props.lat.toFixed(6)}, ${props.lon.toFixed(6)}
+      `;
+    }
+
+    function drawStoreMarkers() {
+      storeMarkerLayer.clearLayers();
+
+      L.geoJSON(storesGeoJson, {
+        filter: function(feature) {
+          return activeStoreIds.has(feature.properties.store_id);
+        },
+        pointToLayer: function(feature, latlng) {
+          return L.circleMarker(latlng, {
+            radius: 6,
+            fillColor: "#006d2c",
+            color: "#ffffff",
+            weight: 1.5,
+            fillOpacity: 0.95
+          });
+        },
+        onEachFeature: function(feature, layer) {
+          layer.bindPopup(storePopupHtml(feature.properties));
+          layer.bindTooltip(feature.properties.name);
+        }
+      }).addTo(storeMarkerLayer);
+    }
+
+    function drawIsochrones() {
+      isochroneLayer.clearLayers();
+
+      L.geoJSON(isochronesGeoJson, {
+        filter: function(feature) {
+          return activeStoreIds.has(feature.properties.store_id);
+        },
+        style: function(feature) {
+          return {
+            fillColor: "#2ca25f",
+            color: "#006d2c",
+            weight: 1.25,
+            fillOpacity: 0.30,
+            opacity: 0.8
+          };
+        },
+        onEachFeature: function(feature, layer) {
+          layer.bindTooltip("12-minute walking area: " + feature.properties.store_name);
+        }
+      }).addTo(isochroneLayer);
+    }
+
+    function redrawMapLayers() {
+      drawIsochrones();
+      drawStoreMarkers();
+      updateVisibleCount();
+    }
+
+    function updateVisibleCount() {
+      document.getElementById("visibleCount").innerText =
+        `${activeStoreIds.size} of ${storeList.length} stores selected`;
+    }
+
+    function buildSlicer() {
+      const container = document.getElementById("storeList");
+      container.innerHTML = "";
+
+      storeList.forEach(store => {
+        const row = document.createElement("label");
+        row.className = "store-row";
+        row.dataset.storeName = store.name.toLowerCase();
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = true;
+        checkbox.dataset.storeId = store.store_id;
+
+        checkbox.addEventListener("change", function() {
+          if (checkbox.checked) {
+            activeStoreIds.add(store.store_id);
+          } else {
+            activeStoreIds.delete(store.store_id);
+          }
+          redrawMapLayers();
+        });
+
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = store.name;
+
+        row.appendChild(checkbox);
+        row.appendChild(nameSpan);
+        container.appendChild(row);
+      });
+    }
+
+    function setAllStores(checked) {
+      const checkboxes = document.querySelectorAll("#storeList input[type='checkbox']");
+
+      activeStoreIds.clear();
+
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+        if (checked) {
+          activeStoreIds.add(cb.dataset.storeId);
+        }
+      });
+
+      redrawMapLayers();
+    }
+
+    function setupSearch() {
+      const searchInput = document.getElementById("storeSearch");
+
+      searchInput.addEventListener("input", function() {
+        const searchText = searchInput.value.trim().toLowerCase();
+        const rows = document.querySelectorAll(".store-row");
+
+        rows.forEach(row => {
+          const name = row.dataset.storeName;
+          row.style.display = name.includes(searchText) ? "flex" : "none";
+        });
+      });
+    }
+
+    document.getElementById("selectAllBtn").addEventListener("click", function() {
+      setAllStores(true);
+    });
+
+    document.getElementById("clearAllBtn").addEventListener("click", function() {
+      setAllStores(false);
+    });
+
+    const overlays = {
+      "CTA rail lines": railLayer,
+      "Selected grocery stores": storeMarkerLayer,
+      "12-minute walkability": isochroneLayer
+    };
+
+    L.control.layers(baseMaps, overlays, { collapsed: false }).addTo(map);
+    L.control.scale().addTo(map);
+
+    buildSlicer();
+    setupSearch();
+    redrawMapLayers();
+  </script>
+</body>
+</html>
